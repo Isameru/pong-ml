@@ -1,0 +1,6 @@
+# LibTorch Runtime is too big to be kept on github
+external/libtorch-linux/*
+external/libtorch-cuda-linux/*
+.vscode
+_out
+net
