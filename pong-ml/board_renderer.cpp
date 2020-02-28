@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-namespace pingpong
+namespace pong
 {
     BoardRenderer::BoardRenderer(bool vsync)
     {
@@ -18,7 +18,7 @@ namespace pingpong
         GLenum glewError = glewInit();
 
         if (glewError != GLEW_OK)
-            throw std::runtime_error(std::string{"unable to initialize the OpenGL Extension Wrangler Library: glewInit() failed: "} + reinterpret_cast<const char*>(glewGetErrorString(glewError)));
+            throw std::runtime_error(std::string{"Unable to initialize OpenGL Extension Wrangler Library: glewInit() failed: "} + reinterpret_cast<const char*>(glewGetErrorString(glewError)));
 
         SDL_GL_SetSwapInterval(vsync ? 1 : 0);
 
@@ -46,9 +46,7 @@ namespace pingpong
     }
 
     BoardRenderer::~BoardRenderer()
-    {
-        // TODO
-    }
+    { }
 
     void BoardRenderer::Draw(const BoardState& boardState)
     {
@@ -58,13 +56,15 @@ namespace pingpong
         glUseProgram(_shaderProgramId);
         glEnableVertexAttribArray(0);
 
-        DrawBoardRect(cfg.secondaryColor);
+        DrawRect(false, vec2{0.0f, 0.0f}, vec2{1.0f, 2.0f}, cfg.secondaryColor);
+        DrawRect(false, vec2{0.0f, 0.0f}, vec2{1.0f, 2.0f * cfg.racquetToCenterDistance}, cfg.secondaryColor);
+        DrawRect(false, vec2{0.0f, 0.0f}, vec2{1.0f, 0.0f}, cfg.secondaryColor);
         DrawCircle(boardState.ball.pos, cfg.ballRadius, cfg.primaryColor);
 
         for (int playerSlot = 0; playerSlot < 2; ++playerSlot)
         {
-            DrawCircle(boardState.racquets[playerSlot].grip.pos, cfg.racquetGripRadius, cfg.secondaryColor);
-            DrawRect(boardState.racquets[playerSlot].face.pos, cfg.racquetFaceDim, boardState.racquets[playerSlot].face.angle, cfg.primaryColor);
+            DrawCircle(boardState.racquets[playerSlot].grip.pos, cfg.racquetGripRadius, cfg.primaryColor);
+            DrawRect(true, boardState.racquets[playerSlot].face.pos, cfg.racquetFaceDim, boardState.racquets[playerSlot].face.angle, cfg.primaryColor);
         }
 
         SDL_GL_SwapWindow(_window);
@@ -84,7 +84,6 @@ namespace pingpong
             "out vec4 out_color;\n"
             "void main() {\n"
             "out_color = color; }";
-        //"out_color = vec4(1.0, 1.0, 1.0, 1.0); }";
 
         GLuint vertexShaderId = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vertexShaderId, 1, &vertexShader, nullptr);
@@ -161,10 +160,19 @@ namespace pingpong
         glDrawArrays(GL_TRIANGLE_FAN, 0, _circleVertexCount);
     }
 
-    void BoardRenderer::DrawRect(vec2 pos, vec2 dim, float rotation, vec4 color)
+    void BoardRenderer::DrawRect(bool filled, vec2 pos, vec2 dim, vec4 color)
     {
-        glBindBuffer(GL_ARRAY_BUFFER, _rectVertexBufferId);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        const auto transform =
+            glm::mat3(
+                dim.x, 0.0f, 0.0f,
+                0.0f, dim.y, 0.0f,
+                0.0f, 0.0f, 1.0f) *
+            _view;
+        DrawRect(filled, transform, color);
+    }
+
+    void BoardRenderer::DrawRect(bool filled, vec2 pos, vec2 dim, float rotation, vec4 color)
+    {
         const auto transform =
             glm::mat3(
                 dim.x, 0.0f, 0.0f,
@@ -175,18 +183,16 @@ namespace pingpong
                 std::sin(rotation), std::cos(rotation), pos.y,
                 0.0f, 0.0f, 1.0f) *
             _view;
-        glUniformMatrix2x3fv(_transformLocation, 1, GL_FALSE, &transform[0][0]);
-        glUniform4fv(_colorLocation, 1, &color[0]);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        DrawRect(filled, transform, color);
     }
 
-    void BoardRenderer::DrawBoardRect(vec4 color)
+    void BoardRenderer::DrawRect(bool filled, mat3 transform, vec4 color)
     {
         glBindBuffer(GL_ARRAY_BUFFER, _rectVertexBufferId);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-        glUniformMatrix2x3fv(_transformLocation, 1, GL_FALSE, &_boardRectTransform[0][0]);
+        glUniformMatrix2x3fv(_transformLocation, 1, GL_FALSE, &transform[0][0]);
         glUniform4fv(_colorLocation, 1, &color[0]);
-        glDrawArrays(GL_LINE_LOOP, 0, 4);
+        glDrawArrays(filled ? GL_TRIANGLE_FAN : GL_LINE_LOOP, 0, 4);
     }
 
-} // namespace pingpong
+} // namespace pong

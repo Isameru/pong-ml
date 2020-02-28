@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-namespace pingpong
+namespace pong
 {
     namespace
     {
@@ -14,7 +14,7 @@ namespace pingpong
     BoardSim::BoardSim()
     {
         _space = cpSpaceNew();
-        //cpSpaceSetGravity(_space, cpVect{0.1f, -0.01f});
+        cpSpaceSetUserData(_space, this);
 
         cpBody* staticBody = cpSpaceGetStaticBody(_space);
 
@@ -37,6 +37,7 @@ namespace pingpong
         //
         _ballBody = cpSpaceAddBody(_space, cpBodyNew(cfg.ballMass, cpMomentForCircle(cfg.ballMass, cfg.ballRadius, cfg.ballRadius, cpvzero)));
         cpShape* ballShape = cpSpaceAddShape(_space, cpCircleShapeNew(_ballBody, cfg.ballRadius, cpvzero));
+        cpShapeSetCollisionType(ballShape, CollisionType::Ball);
         cpShapeSetElasticity(ballShape, cfg.ballElasticity);
 
         // Create the racquets.
@@ -47,8 +48,10 @@ namespace pingpong
             const auto sideFactor = 2.0 * static_cast<double>(playerSlot) - 1.0;
 
             racquet.gripBody = cpSpaceAddBody(_space, cpBodyNew(cfg.racquetGripMass, cpMomentForCircle(cfg.racquetGripMass, cfg.racquetGripRadius, cfg.racquetGripRadius, cpvzero)));
-            cpShape* racquetGripShape = cpSpaceAddShape(_space, cpCircleShapeNew(racquet.gripBody, cfg.racquetGripRadius, cpvzero));
-            cpShapeSetElasticity(racquetGripShape, cfg.racquetGripElasticity);
+            cpBodySetPosition(racquet.gripBody, cpVect{0.0, sideFactor * cfg.racquetToCenterDistance});
+            racquet.gripShape = cpSpaceAddShape(_space, cpCircleShapeNew(racquet.gripBody, cfg.racquetGripRadius, cpvzero));
+            cpShapeSetCollisionType(racquet.gripShape, CollisionType::Racquet);
+            cpShapeSetElasticity(racquet.gripShape, cfg.racquetGripElasticity);
 
             cpVect racquetFaceVertices[] = {
                 { -0.5 * sideFactor * cfg.racquetFaceDim.x, -0.5 * sideFactor * cfg.racquetFaceDim.y },
@@ -57,13 +60,19 @@ namespace pingpong
                 { -0.5 * sideFactor * cfg.racquetFaceDim.x, +0.5 * sideFactor * cfg.racquetFaceDim.y } };
 
             racquet.faceBody = cpSpaceAddBody(_space, cpBodyNew(cfg.racquetFaceMass, cpMomentForPoly(cfg.racquetFaceMass, 4, racquetFaceVertices, cpvzero, 0.0)));
-            cpShape* racquetFaceShape = cpSpaceAddShape(_space, cpPolyShapeNew(racquet.faceBody, 4, racquetFaceVertices, cpTransformIdentity, 0.0));
-            cpShapeSetElasticity(racquetFaceShape, cfg.racquetFaceElasticity);
+            cpBodySetPosition(racquet.faceBody, cpVect{0.0, sideFactor * (0.5 * cfg.racquetFaceDim.y + cfg.racquetToCenterDistance + cfg.racquetGripRadius)});
+            racquet.faceShape = cpSpaceAddShape(_space, cpPolyShapeNew(racquet.faceBody, 4, racquetFaceVertices, cpTransformIdentity, 0.0));
+            cpShapeSetCollisionType(racquet.faceShape, CollisionType::Racquet);
+            cpShapeSetElasticity(racquet.faceShape, cfg.racquetFaceElasticity);
 
-            // The joint constraints are created later (in NewMatch() -> ResetSpace()), after proper object repositioning.
+            cpSpaceAddConstraint(_space, cpPivotJointNew2(racquet.gripBody, racquet.faceBody, cpVect{0.0, 0.0}, cpVect{0.0, sideFactor * (-0.5 * cfg.racquetFaceDim.y - cfg.racquetGripRadius)}));
+            cpSpaceAddConstraint(_space, cpGrooveJointNew(staticBody, racquet.gripBody, cpVect{-0.5f, sideFactor * cfg.racquetToCenterDistance}, cpVect{+0.5f, sideFactor * cfg.racquetToCenterDistance}, cpVect{0.0, 0.0}));
         }
 
-        _state.match = -1;   // Shall be incremented to 0 in the next line.
+        cpCollisionHandler* collisionHandler = cpSpaceAddCollisionHandler(_space, CollisionType::Ball, CollisionType::Racquet);
+        collisionHandler->postSolveFunc = &BallRacquetCollisionPostSolveCallback;
+
+        _state.match = -1;   // Shall be incremented to 0 with the first call to NewMatch().
     }
 
     BoardSim::~BoardSim()
@@ -79,6 +88,8 @@ namespace pingpong
         _state.terminal = false;
         _state.winner = -1;
 
+        cpSpaceSetGravity(_space, cpVect{0.0f, (_state.match % 2 == 0) ? -cfg.gravity : +cfg.gravity});
+
         ResetSpace();
         UpdateState();
     }
@@ -87,43 +98,50 @@ namespace pingpong
     {
         assert(_state.match >= 0 && "Call BoardSim::NewMatch() first");
 
-        const auto ballPos = cpBodyGetPosition(_ballBody);
-        const auto ballVel = cpBodyGetVelocity(_ballBody);
-        const auto ballResultantForce = cpVect{-cfg.ballMotionResistance * ballVel.x, -cfg.ballMotionResistance * ballVel.y};
-        cpBodyApplyForceAtWorldPoint(_ballBody, ballResultantForce, ballPos);
+        _state.scores = {0.0f, 0.0f};
 
-        for (int playerSlot = 0; playerSlot < 2; ++playerSlot)
+        const double effectiveTimeStep = cfg.timeStep / static_cast<double>(cfg.subSteps);
+
+        for (int subStep = 0; subStep < cfg.subSteps; ++subStep)
         {
-            auto& racquet = _racquets[playerSlot];
-            const auto sideFactor = 2.0 * static_cast<double>(playerSlot) - 1.0;
+            const auto ballPos = cpBodyGetPosition(_ballBody);
+            const auto ballVel = cpBodyGetVelocity(_ballBody);
+            _lastBallVelY = ballVel.y;
+            const auto ballResultantForce = cpVect{-cfg.ballMotionResistance * ballVel.x, -cfg.ballMotionResistance * ballVel.y};
+            cpBodyApplyForceAtWorldPoint(_ballBody, ballResultantForce, ballPos);
 
-            const auto action = actions[playerSlot];
-            const auto move = ivec2{(action % 3) - 1, (action / 3) - 1};
+            for (int playerSlot = 0; playerSlot < 2; ++playerSlot)
+            {
+                auto& racquet = _racquets[playerSlot];
+                const auto sideFactor = 2.0 * static_cast<double>(playerSlot) - 1.0;
 
-            auto move_r = vec2{static_cast<float>(move.x), static_cast<float>(move.y)};
-            if (move.x != 0 && move.y != 0)
-                move_r /= glm::length(move_r);
+                const auto action = actions[playerSlot];
+                assert(action == 0 || action == 1);
+                float move_x = static_cast<float>((2 * action) - 1);
 
-            const auto racquetGripPos = cpBodyGetPosition(racquet.gripBody);
-            //const cpVect racquetGripVel = cpBodyGetVelocity(racquet.gripBody);
-            const auto racquetGripResultantForce = cpVect{-sideFactor * cfg.racquetGripSteeringForce * move_r.x, -sideFactor * cfg.racquetGripSteeringForce * move_r.y};
-            cpBodyApplyForceAtWorldPoint(racquet.gripBody, racquetGripResultantForce, racquetGripPos);
-            cpBodySetAngularVelocity(racquet.gripBody, 0.0);
+                const auto racquetGripPos = cpBodyGetPosition(racquet.gripBody);
+                const auto racquetGripResultantForce = cpVect{-sideFactor * cfg.racquetGripSteeringForce * move_x, 0.0f};
+                cpBodyApplyForceAtWorldPoint(racquet.gripBody, racquetGripResultantForce, racquetGripPos);
+                cpBodySetAngularVelocity(racquet.gripBody, 0.0);
 
-            const auto racquetFacePos = cpBodyGetPosition(racquet.faceBody);
-            const cpVect racquetFaceVel = cpBodyGetVelocity(racquet.faceBody);
-            const auto racquetFaceResultantForce = cpVect{-cfg.racquetFaceMotionResistance * racquetFaceVel.x, -cfg.racquetFaceMotionResistance * racquetFaceVel.y};
-            cpBodyApplyForceAtWorldPoint(racquet.faceBody, racquetFaceResultantForce, racquetFacePos);
+                const auto racquetFacePos = cpBodyGetPosition(racquet.faceBody);
+                const cpVect racquetFaceVel = cpBodyGetVelocity(racquet.faceBody);
+                const auto racquetFaceResultantForce = cpVect{-cfg.racquetFaceMotionResistance * racquetFaceVel.x, -cfg.racquetFaceMotionResistance * racquetFaceVel.y};
+                cpBodyApplyForceAtWorldPoint(racquet.faceBody, racquetFaceResultantForce, racquetFacePos);
+            }
+
+            cpSpaceStep(_space, effectiveTimeStep);
         }
 
-        cpSpaceStep(_space, cfg.timeStep);
-
         ++_state.time;
+
         UpdateState();
     }
 
     void BoardSim::UpdateState()
     {
+        _state.gravity = cpSpaceGetGravity(_space).y;
+
         {
             cpVect pos = cpBodyGetPosition(_ballBody);
             _state.ball.pos = vec2{pos.x, pos.y};
@@ -149,30 +167,18 @@ namespace pingpong
 
     void BoardSim::CheckTerminalCondition()
     {
-        _state.scores = {0.0f, 0.0f};
-        _state.penalties = {0.0f, 0.0f};
-
         if (_state.ball.pos.y < -1.0f) {
             _state.terminal = true;
             _state.winner = 1;
-            _state.scores[1] = 100.0f;
+            _state.scores[1] = cfg.winScore;
         }
         else if (_state.ball.pos.y > 1.0f) {
             _state.terminal = true;
             _state.winner = 0;
-            _state.scores[0] = 100.0f;
-        }
-        else if (_state.racquets[0].grip.pos.y < -1.0f || _state.racquets[0].grip.pos.y > 1.0f) {
-            _state.terminal = true;
-            _state.winner = 1;
-            _state.penalties[0] = 50.0f;
-        }
-        else if (_state.racquets[1].grip.pos.y < -1.0f ||_state.racquets[1].grip.pos.y > 1.0f) {
-            _state.terminal = true;
-            _state.winner = 0;
-            _state.penalties[1] = 50.0f;
+            _state.scores[0] = cfg.winScore;
         }
         else if (_state.time > cfg.matchTickLimit) {
+            // The match ends with a draw.
             _state.terminal = true;
         }
     }
@@ -197,11 +203,39 @@ namespace pingpong
             cpBodySetVelocity(racquet.faceBody, cpvzero);
             cpBodySetAngle(racquet.faceBody, 0.0);
             cpBodySetAngularVelocity(racquet.faceBody, 0.0);
-
-            if (racquet.pivotJoint == nullptr) {
-                racquet.pivotJoint = cpSpaceAddConstraint(_space, cpPivotJointNew2(racquet.gripBody, racquet.faceBody, cpVect{0.0, 0.0}, cpVect{0.0, sideFactor * (-0.5 * cfg.racquetFaceDim.y - cfg.racquetGripRadius)}));
-            }
         }
     }
 
-} // namespace pingpong
+    void BoardSim::BallRacquetCollisionPostSolveCallback(cpArbiter* arbiter, cpSpace* space, void* data)
+    {
+        reinterpret_cast<BoardSim*>(cpSpaceGetUserData(space))->OnBallRacquetCollisionPostSolve(arbiter);
+    }
+
+    void BoardSim::OnBallRacquetCollisionPostSolve(cpArbiter* arbiter)
+    {
+        cpShape* ballShape {};
+        cpShape* racquetShape {};
+        cpArbiterGetShapes(arbiter, &ballShape, &racquetShape);
+
+        if (racquetShape == _racquets[0].faceShape || racquetShape == _racquets[0].gripShape)
+        {
+            if (cpSpaceGetGravity(_space).y < 0.0f) {
+                cpSpaceSetGravity(_space, cpVect{0.0f, cfg.gravity});
+                _state.scores[0] += cfg.ballInterceptionScore;
+            }
+
+            _state.scores[0] += +cfg.ballSendingScoreToSpeed * (cpBodyGetVelocity(_ballBody).y - _lastBallVelY);
+        }
+        else if (racquetShape == _racquets[1].faceShape || racquetShape == _racquets[1].gripShape)
+        {
+            if (cpSpaceGetGravity(_space).y > 0.0f) {
+                cpSpaceSetGravity(_space, cpVect{0.0f, -cfg.gravity});
+                _state.scores[1] += cfg.ballInterceptionScore;
+            }
+
+            _state.scores[1] += -cfg.ballSendingScoreToSpeed * (cpBodyGetVelocity(_ballBody).y - _lastBallVelY);
+        }
+        else assert(false);
+    }
+
+} // namespace pong

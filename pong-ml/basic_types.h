@@ -3,7 +3,7 @@
 
 #include "pch.h"
 
-namespace pingpong
+namespace pong
 {
     using Clock = std::chrono::high_resolution_clock;
 
@@ -21,7 +21,8 @@ namespace pingpong
         bool terminal;
         int winner;
         std::array<float, 2> scores;
-        std::array<float, 2> penalties;
+
+        float gravity;
 
         struct Ball {
             vec2 pos;
@@ -57,4 +58,4 @@ namespace pingpong
         virtual void ProvideFeedback(const BoardState& stateNext) = 0;
     };
 
-} // namespace pingpong
+} // namespace pong

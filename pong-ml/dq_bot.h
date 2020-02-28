@@ -6,10 +6,8 @@
 #include "pch.h"
 #include "basic_types.h"
 
-namespace pingpong
+namespace pong
 {
-    extern const torch::Device LibTorchDevice;
-
     struct Batch
     {
         torch::Tensor state;
@@ -50,7 +48,8 @@ namespace pingpong
         torch::nn::Linear layer_1;
         torch::nn::Linear layer_2;
         torch::nn::Linear layer_3;
-        torch::nn::LeakyReLU leakyReLU;
+        torch::nn::Linear layer_4L;
+        torch::nn::Linear layer_4R;
 
         DQNet();
         torch::Tensor forward(torch::Tensor input);
@@ -59,6 +58,9 @@ namespace pingpong
     class DQEngine
     {
         const std::string _modelPath;
+        int matchNum = -1;
+        //DQNet _playNet;
+        //DQNet _trainNet;
         DQNet _net;
         torch::optim::Adam _optimizer;
         ReplayMemory _replayMemory;
@@ -70,13 +72,14 @@ namespace pingpong
         uint8_t ChooseAction(const std::vector<float>& stateVector);
         void Memorize(const std::vector<float>& stateVector, uint8_t action, const std::vector<float>& stateNextVector, float reward, bool terminal);
         void Optimize();
+        static void CopyParameters(DQNet& dstNet, DQNet& srcNet);
     };
 
     class DQBot : public IPlayer
     {
         DQEngine& _dqEngine;
         std::mt19937 _randGen;
-        float _randomPolicyThreshold {};
+        float _randomPolicyThreshold;
         std::vector<float> _lastState;
         uint8_t _lastAction {};
         bool _humanControl {};
@@ -90,4 +93,4 @@ namespace pingpong
         virtual void ProvideFeedback(const BoardState& stateNext) override;
     };
 
-} // namespace pingpong
+} // namespace pong

@@ -4,16 +4,23 @@
 #include "pch.h"
 #include "basic_types.h"
 
-namespace pingpong
+namespace pong
 {
     class BoardSim
     {
+        struct CollisionType {
+            constexpr static cpCollisionType Ball = 1;
+            constexpr static cpCollisionType Racquet = 2;
+        };
+
         cpSpace* _space {};
         cpBody* _ballBody {};
+        float _lastBallVelY {};
         struct Racquet {
             cpBody* gripBody {};
+            cpShape* gripShape {};
             cpBody* faceBody {};
-            cpConstraint* pivotJoint = nullptr;
+            cpShape* faceShape {};
         };
         std::array<Racquet, 2> _racquets;
 
@@ -31,6 +38,9 @@ namespace pingpong
         void UpdateState();
         void CheckTerminalCondition();
         void ResetSpace();
+
+        static void BallRacquetCollisionPostSolveCallback(cpArbiter* arbiter, cpSpace* space, void* data);
+        void OnBallRacquetCollisionPostSolve(cpArbiter* arbiter);
     };
 
-} // namespace pingpong
+} // namespace pong

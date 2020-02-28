@@ -4,13 +4,13 @@
 #include "pch.h"
 #include "basic_types.h"
 
-namespace pingpong
+namespace pong
 {
     class BoardRenderer;
     class BoardSim;
     class DQEngine;
 
-    class PassivePlayer : public IPlayer
+    /*class PassivePlayer : public IPlayer
     {
     public:
         PassivePlayer(int slot) : IPlayer{slot} {}
@@ -28,7 +28,7 @@ namespace pingpong
         virtual void NewMatch() override {};
         virtual uint8_t ChooseAction(const BoardState& state, const PressedKeySet& keys) override;
         virtual void ProvideFeedback(const BoardState& stateNext) override {}
-    };
+    };*/
 
     class GameApp
     {
@@ -61,4 +61,4 @@ namespace pingpong
         void NewGame();
     };
 
-} // namespace pingpong
+} // namespace pong

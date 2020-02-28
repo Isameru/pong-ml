@@ -4,7 +4,7 @@
 #include "pch.h"
 #include "basic_types.h"
 
-namespace pingpong
+namespace pong
 {
     constexpr char GameWindowTitle[] = "Pong :: The Machine Learning Game";
 
@@ -38,8 +38,9 @@ namespace pingpong
         VertexBufferId MakeCircleVertexBuffer(float radius);
 
         void DrawCircle(vec2 pos, float radius, vec4 color);
-        void DrawRect(vec2 pos, vec2 dim, float rotation, vec4 color);
-        void DrawBoardRect(vec4 color);
+        void DrawRect(bool filled, vec2 pos, vec2 dim, vec4 color);
+        void DrawRect(bool filled, vec2 pos, vec2 dim, float rotation, vec4 color);
+        void DrawRect(bool filled, mat3 transform, vec4 color);
     };
 
-} // namespace pingpong
+} // namespace pong

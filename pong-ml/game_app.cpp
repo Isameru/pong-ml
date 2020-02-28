@@ -7,48 +7,50 @@
 #include "config.h"
 #include "dq_bot.h"
 
-namespace pingpong
+namespace pong
 {
-    uint8_t HumanPlayer::ChooseAction(const BoardState& state, const PressedKeySet& keys)
+    /*uint8_t HumanPlayer::ChooseAction(const BoardState& state, const PressedKeySet& keys)
     {
-        auto move = ivec2{0, 0};
+        int move_x = 0;
 
         if (Slot() == 0)
         {
-            if (keys.test(SDL_SCANCODE_LEFT)) move.x -= 1;
-            if (keys.test(SDL_SCANCODE_RIGHT)) move.x += 1;
-            if (keys.test(SDL_SCANCODE_DOWN)) move.y -= 1;
-            if (keys.test(SDL_SCANCODE_UP)) move.y += 1;
+            if (keys.test(SDL_SCANCODE_LEFT)) move_x -= 1;
+            if (keys.test(SDL_SCANCODE_RIGHT)) move_x += 1;
         }
         else if (Slot() == 1)
         {
             // Note: For the second (upper) slot, effective "left" and "right" controls are swapped.
-            if (keys.test(SDL_SCANCODE_A)) move.x += 1;
-            if (keys.test(SDL_SCANCODE_D)) move.x -= 1;
-            if (keys.test(SDL_SCANCODE_W)) move.y -= 1;
-            if (keys.test(SDL_SCANCODE_S)) move.y += 1;
+            if (keys.test(SDL_SCANCODE_A)) move_x += 1;
+            if (keys.test(SDL_SCANCODE_D)) move_x -= 1;
         }
         else assert(false);
 
-        uint8_t action = 3 * (move.y + 1) + (move.x + 1);
-        return action;
-    }
-
+        if (move_x == -1) {
+            return 0;
+        }
+        else if (move_x == 1) {
+            return 1;
+        }
+        else if (move_x == 0) {
+            return state.racquets[Slot()].grip.vel.x > 0.0f ? Slot() : 1 - Slot();
+        }
+        else assert(false);
+    }*/
 
     GameApp::GameApp(bool vsync) :
         _vsync{vsync},
         _tickInterval{ComputeTickInterval()}
     {
-        SDL_Init(SDL_INIT_VIDEO); //SDL_INIT_EVERYTHING
+        SDL_Init(SDL_INIT_VIDEO);
         //IMG_Init(IMG_INIT_PNG);
         //TTF_Init();
 
         _boardRenderer = std::make_unique<BoardRenderer>(_vsync);
         _boardSim = std::make_unique<BoardSim>();
 
-        _dqEngine = std::make_unique<DQEngine>("net");
+        _dqEngine = std::make_unique<DQEngine>(cfg.modelPath);
 
-        // TODO
         _players[0] = std::make_unique<DQBot>(0, *_dqEngine);
         _players[1] = std::make_unique<DQBot>(1, *_dqEngine);
 
@@ -67,11 +69,12 @@ namespace pingpong
         _startTime = Clock::now();
         _tickStartTime = {};
 
-#ifdef __EMSCRIPTEN__
+/*#ifdef __EMSCRIPTEN__
         emscripten_set_main_loop_arg([](void* ctx) {
             reinterpret_cast<GameApp*>(ctx)->OnTick();
         }, this, 0, 1);
-#else
+#else*/
+
         while (!_quitRequested)
         {
             if (_vsync && _tickStartTime != Clock::time_point{}) {
@@ -84,12 +87,11 @@ namespace pingpong
             OnTick();
             ++_tickCount;
 
-            // if (_tickCount % 60 == 0) {
-            //     const auto elapsedMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - _startTime).count();
-            //     std::cout << "FPS: " << 1000.0 * static_cast<double>(_tickCount) / static_cast<double>(elapsedMilliseconds) << std::endl;
-            // }
+            /*if (_tickCount % 60 == 0) {
+                const auto elapsedMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - _startTime).count();
+                std::cout << "FPS: " << 1000.0 * static_cast<double>(_tickCount) / static_cast<double>(elapsedMilliseconds) << std::endl;
+            }*/
         }
-#endif
     }
 
     Clock::duration GameApp::ComputeTickInterval()
@@ -149,31 +151,32 @@ namespace pingpong
             std::cout << std::endl;
 
             NewGame();
-            return;
         }
+        else
+        {
+            auto actions = std::array<uint8_t, 2>{
+                _players[0]->ChooseAction(state, _pressedKeys),
+                _players[1]->ChooseAction(state, _pressedKeys)
+            };
 
-        auto actions = std::array<uint8_t, 2>{
-            _players[0]->ChooseAction(state, _pressedKeys),
-            _players[1]->ChooseAction(state, _pressedKeys)
-        };
+            _boardSim->Step(actions);
 
-        _boardSim->Step(actions);
+            const auto& stateNext = _boardSim->State();
+            _players[0]->ProvideFeedback(stateNext);
+            _players[1]->ProvideFeedback(stateNext);
 
-        const auto& stateNext = _boardSim->State();
-        _players[0]->ProvideFeedback(stateNext);
-        _players[1]->ProvideFeedback(stateNext);
-
-        _dqEngine->Optimize();
+            //_dqEngine->Optimize();
+        }
     }
 
     void GameApp::NewGame()
     {
         _boardSim->NewMatch();
-        _dqEngine->NewMatch();
+        _dqEngine->NewMatch();   // Network optimization takes place here.
         _players[0]->NewMatch();
         _players[1]->NewMatch();
 
         std::cout << "Match " << _boardSim->State().match << " started" << std::endl;
     }
 
-} // namespace pingpong
+} // namespace pong

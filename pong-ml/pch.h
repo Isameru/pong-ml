@@ -6,6 +6,8 @@
 //  https://pytorch.org/
 //
 #include <torch/torch.h>
+#include <torch/nn/module.h>
+#include <torch/nn/modules/normalization.h>
 #include <torch/csrc/autograd/variable.h>
 #include <torch/csrc/autograd/function.h>
 
